@@ -7,6 +7,6 @@ class Problema:
             problema_json = json.load(f)
 
 
-#
+
 if __name__ == '__main__':
     problema = Problema('test.json') # Inicializamos el problema cargando el json y parametrizandolo
