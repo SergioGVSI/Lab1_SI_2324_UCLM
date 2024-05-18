@@ -45,6 +45,7 @@ class Problema:
         print("Mean execution time:", (self.media_tiempo_ejecucion / len(self.destinos)))
         print("Mean solution length:", (self.media_tamaño_solucion / len(self.destinos)))
         print("Mean solution cost:", (self.media_coste_solucion / len(self.destinos)))
+        print(" ")
         self.resetear_estadisticas()
 
     # Método usado para resetear las estadísticas
@@ -56,6 +57,44 @@ class Problema:
         self.media_tiempo_ejecucion = 0.0
         self.media_tamaño_solucion = 0.0
         self.media_coste_solucion = 0.0
+
+    def resolver_anchura(self, nodos_rescate):
+        print("---ALGORITMO EN ANCHURA---")
+        for persona_rescate in nodos_rescate:
+            Anchura(problema).iniciar_busqueda(persona_rescate)
+        self.estadisticas_globales()
+
+    def resolver_profundidad(self, nodos_rescate):
+        print("---ALGORITMO EN PROFUNDIDAD---")
+        for persona_rescate in nodos_rescate:
+            Profundidad(problema).iniciar_busqueda(persona_rescate)
+        self.estadisticas_globales()
+
+    def resolver_profundidad_limitada(self, nodos_rescate, prof_max):
+        print("---ALGORITMO EN PROFUNDIDAD LIMITADA---")
+        for persona_rescate in nodos_rescate:
+            Profundidad(problema).iniciar_busqueda_limitada(persona_rescate, prof_max)
+        self.estadisticas_globales()
+
+    def resolver_profundidad_iterativa(self, nodos_rescate):
+        print("---ALGORITMO EN PROFUNDIDAD ITERATIVA---")
+        prof_max = 1
+        for persona_rescate in nodos_rescate:
+            sol = Profundidad(problema).iniciar_busqueda_limitada(persona_rescate, prof_max)
+            if sol == -1:
+                while sol == -1:
+                    prof_max += 1
+                    # print("Aumentando profundidad en ", 1,"profundidad actual: ", prof_max)
+                    # print(" ")
+                    sol = Profundidad(problema).iniciar_busqueda_limitada(persona_rescate, prof_max)
+        problema.estadisticas_globales()
+        # print("Profundidad máxima alcanzada ", profundidad_maxima)
+
+    def resolver_primero_el_mejor(self, nodos_rescate):
+        pass
+
+    def resolver_A_estrella(self, nodos_rescate):
+        pass
 
 
 # Clase en la que definimos el estado
@@ -94,14 +133,15 @@ class Nodo:
     def __init__(self, estado, accion=None, padre=None, nid=0):
         self.estado = estado
         self.padre = padre
-        self.coste = accion.coste + padre.coste if padre is not None else 0
-        self.profundidad = padre.profundidad + 1 if padre is not None else 0
+        self.coste = accion.coste + padre.coste if padre is not None else 0  # Hecho en tutoria con Juan Carlos
+        self.profundidad = padre.profundidad + 1 if padre is not None else 0  # Hecho en tutoria con Juan Carlos
         self.accion = accion
         self.id = nid
 
     def __eq__(self, otro):
         return hash(self.estado) == hash(otro)
 
+    # Hecho en tutoria con Juan Carlos
     def __lt__(self, otro):
         return self.id < otro.id
 
@@ -175,11 +215,42 @@ class Search(ABC):
                 camino = self.recuperar_camino(nodo)
                 return self.generar_estadisticas(camino)
             else:
-                if nodo.estado not in self.nodos_cerrados:
+                if nodo.estado not in self.nodos_cerrados:  # Requiere que estado tenga hash
                     sucesores = self.generar_sucesores(nodo)
                     for sucesor in sucesores:
                         self.insertar_nodo(sucesor, self.nodos_abiertos)
                 self.nodos_cerrados.add(nodo.estado)
+        '''if self.comprobar_vacio(self.nodos_abiertos):
+            print("No se ha podido acceder a la persona")
+            print(" ")'''
+
+    # Nuevo método de búsqueda entrega extraordinaria
+    # Funciona similar que el anterior pero con la maxima profundidad adjuntada como parámetro
+    # En caso de no encontrar a la persona a una profundidad, se especifica el mensaje de error
+    def iniciar_busqueda_limitada(self, rescate, max_profundidad):
+        iniciar_temporizador = time.perf_counter()
+        self.insertar_nodo(self.ciudad.inicio, self.nodos_abiertos)
+        print("Rescuing person at position:", (rescate.estado.fila, rescate.estado.columna))
+        print("-----------------------------------")
+        while not self.comprobar_vacio(self.nodos_abiertos):
+            nodo = self.extraer_nodo(self.nodos_abiertos)
+            if nodo.estado == rescate.estado:
+                self.coste = nodo.coste
+                finalizar_temporizador = time.perf_counter()
+                self.tiempo_ejecucion = (finalizar_temporizador - iniciar_temporizador)
+                camino = self.recuperar_camino(nodo)
+                return self.generar_estadisticas(camino)
+            else:
+                if nodo.profundidad < max_profundidad and nodo.estado not in self.nodos_cerrados:
+                    sucesores = self.generar_sucesores(nodo)
+                    for sucesor in sucesores:
+                        self.insertar_nodo(sucesor, self.nodos_abiertos)
+                self.nodos_cerrados.add(nodo.estado)
+
+            if self.comprobar_vacio(self.nodos_abiertos):
+                print("No se ha podido acceder a la persona a la profundidad establecida de ", max_profundidad)
+                print(" ")
+                return -1
 
     # Método auxiliar para recuperar el camino tras encontrar a la persona a rescatar
     def recuperar_camino(self, nodo):
@@ -198,6 +269,7 @@ class Search(ABC):
         print("Solution cost:", float(self.coste))
         print("Solution:", list(reversed(camino)))
         print(" ")
+        # Actualizamos los datos del problema
         self.ciudad.personas_rescatadas += 1
         self.ciudad.media_nodos_generados += self.nodos_generados
         self.ciudad.media_nodos_expandidos += self.nodos_expandidos
@@ -214,6 +286,7 @@ class Anchura(Search):
         self.nodos_abiertos = []
 
     def insertar_nodo(self, nodo, nodo_lista):
+        # Con append nos aseguramos del FIFO necesario con el pop
         nodo_lista.append(nodo)
         self.nodos_generados += 1
 
@@ -224,12 +297,58 @@ class Anchura(Search):
         return nodo_lista.__len__() == 0
 
 
+# Algoritmo en profundidad
+
+class Profundidad(Search):
+
+    def __init__(self, ciudad):
+        super().__init__(ciudad)
+        self.nodos_abiertos = []
+
+    def insertar_nodo(self, nodo, nodo_lista):
+        # Si insertamos los nodos en la posicion 0 siempre, nos aseguramos el LIFO necesario con el pop
+        nodo_lista.insert(0, nodo)
+        self.nodos_generados += 1
+
+    def extraer_nodo(self, nodo_lista):
+        return nodo_lista.pop(0)
+
+    def comprobar_vacio(self, nodo_lista):
+        return nodo_lista.__len__() == 0
+
+
+# Algoritmo en profundidad limitada
+class ProfundidadIterativa(Search):
+
+    def __init__(self, ciudad):
+        super().__init__(ciudad)
+        self.profundidad_maxima = 1
+        self.nodos_abiertos = []
+
+    def insertar_nodo(self, nodo, nodo_lista):
+        nodo_lista.insert(0, nodo)
+        self.nodos_generados += 1
+
+    def extraer_nodo(self, nodo_lista):
+        return nodo_lista.pop(0)
+
+    def comprobar_vacio(self, nodo_lista):
+        return nodo_lista.__len__() == 0
+
+
 if __name__ == '__main__':
-    problema = Problema('Lab1/problemas/instance-20-20-33-8-33-2023.json')  # Inicializamos el problema cargando el json y parametrizandolo
-    #problema = Problema('test.json')
+    # Inicializamos el problema cargando el json y parametrizandolo
+    problema = Problema('./Lab1/problemas/instance-20-20-33-8-33-2023.json')
+    profundidad_maxima = 100
     nodos_de_rescate = []
     for persona in problema.destinos:
         nodos_de_rescate.append(Nodo(Estado(persona[0], persona[1])))
-    for persona_a_rescatar in nodos_de_rescate:
-        Anchura(problema).iniciar_busqueda(persona_a_rescatar)
-    problema.estadisticas_globales()
+
+    # Resolución de los algoritmos, descomentar según proceda
+    # problema.resolver_anchura(nodos_de_rescate)
+    # problema.resolver_profundidad(nodos_de_rescate)
+    # problema.resolver_profundidad_limitada(nodos_de_rescate, profundidad_maxima)
+    # problema.resolver_profundidad_iterativa(nodos_de_rescate)
+    #
+    #
+
