@@ -1,6 +1,7 @@
 import json
 from abc import abstractmethod, ABC
 import time
+from queue import PriorityQueue
 
 
 # Clase que inicializa el problema
@@ -34,6 +35,10 @@ class Problema:
     # Verifica si es un estado válido, se usará para generar los sucesores y que el agente no se salga de los límites
     def es_valido(self, estado):
         return 0 <= estado.fila < self.filas and 0 <= estado.columna < self.columnas and not self.es_bloqueado(estado)
+
+    def heuristica_manhattan(self, nodo_origen, nodo_destino):
+        return abs(nodo_origen.estado.fila - nodo_destino.estado.fila) + abs(
+            nodo_origen.estado.columna - nodo_destino.estado.columna)
 
     # Generamos las estadísticas globales tras el rescate de todas las personas y las reseteamos para poder usar otro algoritmo
     def estadisticas_globales(self):
@@ -84,17 +89,23 @@ class Problema:
             if sol == -1:
                 while sol == -1:
                     prof_max += 1
-                    # print("Aumentando profundidad en ", 1,"profundidad actual: ", prof_max)
-                    # print(" ")
+                    #print("Aumentando profundidad en ", 1,"profundidad actual: ", prof_max)
+                    #print(" ")
                     sol = Profundidad(problema).iniciar_busqueda_limitada(persona_rescate, prof_max)
         problema.estadisticas_globales()
-        # print("Profundidad máxima alcanzada ", profundidad_maxima)
+        #print("Profundidad máxima alcanzada ", profundidad_maxima)
 
     def resolver_primero_el_mejor(self, nodos_rescate):
-        pass
+        print("---ALGORITMO PRIMERO EL MEJOR ---")
+        for persona_rescate in nodos_rescate:
+            PrimeroElMejor(problema).iniciar_busqueda(persona_rescate)
+        self.estadisticas_globales()
 
     def resolver_A_estrella(self, nodos_rescate):
-        pass
+        print("---ALGORITMO AESTRELLA---")
+        for persona_rescate in nodos_rescate:
+            AEstrella(problema).iniciar_busqueda(persona_rescate)
+        self.estadisticas_globales()
 
 
 # Clase en la que definimos el estado
@@ -106,6 +117,7 @@ class Estado:
     def __eq__(self, otro):
         return (self.fila, self.columna) == (otro.fila, otro.columna)
 
+    # Usado para comprobar si un estado es o no destino en el método iniciar_busqueda
     def __hash__(self):
         return hash((self.fila, self.columna))
 
@@ -145,6 +157,10 @@ class Nodo:
     def __lt__(self, otro):
         return self.id < otro.id
 
+    # Usado para la búsqueda informada para iterar en PriorityQueue
+    def __hash__(self):
+        return hash(self.estado)
+
 
 # Clase genérica Search que se usará como herencia para los distintos tipos de algoritmos
 class Search(ABC):
@@ -168,6 +184,7 @@ class Search(ABC):
         self.nodos_expandidos = 0
         self.nodos_generados = 0
         self.coste = 0
+        self.rescate_actual = None  # Para el cálculo de la heurística en búsqueda informada PrimeroElMejor y AEstrella
 
     def generar_sucesores(self, nodo):
         # Posibles movimientos
@@ -202,6 +219,7 @@ class Search(ABC):
     # En caso contrario genera sucesores viables y continua la búsqueda
 
     def iniciar_busqueda(self, rescate):
+        self.rescate_actual = rescate  # Para el cálculo de la heurística en búsqueda informada PrimeroElMejor y AEstrella
         iniciar_temporizador = time.perf_counter()
         self.insertar_nodo(self.ciudad.inicio, self.nodos_abiertos)
         print("Rescuing person at position:", (rescate.estado.fila, rescate.estado.columna))
@@ -298,7 +316,6 @@ class Anchura(Search):
 
 
 # Algoritmo en profundidad
-
 class Profundidad(Search):
 
     def __init__(self, ciudad):
@@ -336,6 +353,46 @@ class ProfundidadIterativa(Search):
         return nodo_lista.__len__() == 0
 
 
+# Algoritmo primero el mejor
+class PrimeroElMejor(Search):
+
+    def __init__(self, ciudad):
+        super().__init__(ciudad)
+        self.nodos_abiertos = PriorityQueue()
+
+    def insertar_nodo(self, nodo, nodo_lista):
+        heuristica = self.ciudad.heuristica_manhattan(nodo, self.rescate_actual)
+        nodo_lista.put((heuristica, nodo))
+        self.nodos_generados += 1
+
+    def extraer_nodo(self, nodo_lista):
+        nodo = nodo_lista.get()
+        return nodo[1]
+
+    def comprobar_vacio(self, nodo_lista):
+        return nodo_lista.qsize() == 0
+
+
+# Algoritmo AEstrella
+class AEstrella(Search):
+
+    def __init__(self, ciudad):
+        super().__init__(ciudad)
+        self.nodos_abiertos = PriorityQueue()
+
+    def insertar_nodo(self, nodo, nodo_lista):
+        heuristica = self.ciudad.heuristica_manhattan(nodo, self.rescate_actual)
+        nodo_lista.put(((nodo.coste + heuristica), nodo))
+        self.nodos_generados += 1
+
+    def extraer_nodo(self, nodo_lista):
+        nodo = nodo_lista.get()
+        return nodo[1]
+
+    def comprobar_vacio(self, nodo_lista):
+        return nodo_lista.qsize() == 0
+
+
 if __name__ == '__main__':
     # Inicializamos el problema cargando el json y parametrizandolo
     problema = Problema('./Lab1/problemas/instance-20-20-33-8-33-2023.json')
@@ -345,10 +402,10 @@ if __name__ == '__main__':
         nodos_de_rescate.append(Nodo(Estado(persona[0], persona[1])))
 
     # Resolución de los algoritmos, descomentar según proceda
-    # problema.resolver_anchura(nodos_de_rescate)
-    # problema.resolver_profundidad(nodos_de_rescate)
-    # problema.resolver_profundidad_limitada(nodos_de_rescate, profundidad_maxima)
-    # problema.resolver_profundidad_iterativa(nodos_de_rescate)
-    #
-    #
+    #problema.resolver_anchura(nodos_de_rescate)
+    #problema.resolver_profundidad(nodos_de_rescate)
+    #problema.resolver_profundidad_limitada(nodos_de_rescate, profundidad_maxima)
+    #problema.resolver_profundidad_iterativa(nodos_de_rescate)
+    #problema.resolver_primero_el_mejor(nodos_de_rescate)
+    #problema.resolver_A_estrella(nodos_de_rescate)
 
