@@ -161,7 +161,7 @@ if __name__ == "__main__":
     problem_path = r"instances\lesson5-rl.json"
 
     # Path to the policy JSON
-    policy_path = r"example_policies\lesson5-rl_policy.json"
+    policy_path = r"example_policies/lesson5-rl_policy.json"
 
     # Whether the image should only be shown on screen or also saved to a file
     save_image = True
