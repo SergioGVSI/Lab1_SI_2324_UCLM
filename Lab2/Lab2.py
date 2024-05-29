@@ -140,6 +140,9 @@ class Estado:
     def __eq__(self, otro):
         return (self.fila, self.columna) == (otro.fila, otro.columna)
 
+    def __hash__(self):
+        return hash((self.fila, self.columna))
+
     def __repr__(self):
         return str(f"({self.fila},{self.columna})")
 
@@ -153,12 +156,19 @@ class Agente:
         2: "DOWN",
         3: "LEFT"
     }
+    direcciones_vector = {
+        "UP": (-1, 0),
+        "RIGHT": (0, 1),
+        "DOWN": (1, 0),
+        "LEFT": (0, -1)
+    }
 
     def __init__(self, entorno, alpha, gamma, epsilon, decaimiento_epsilon, json_dir):
         self.entorno = entorno
         self.movimientos = [Agente.direcciones[movimiento] for movimiento in
                             Agente.mov_numericos]  # Arriba, Derecha, Abajo, Izquierda respectivamente
         self.qtabla = np.zeros((entorno.filas, entorno.columnas, len(self.mov_numericos)))
+        self.u_tabla = {}
         self.alpha = alpha
         self.gamma = gamma
         self.epsilon = epsilon
@@ -166,6 +176,7 @@ class Agente:
         self.politica = None
         self.json_dir = json_dir
         self.tiempo_ejecucion = None
+        self.politica_it = {}
 
     # El agente sólo desea aplicar una accion en base a un estado, es el entorno el encargado de que esa aplicacion se ejecute
     # así como se obtenga la recompensa
@@ -260,13 +271,117 @@ class Agente:
         print("\n ")
         draw_policy_map(json_dir, self.politica)
 
+    # ---------------------------------- EJERCICIO PARTE EXTRAORDINARIA ----------------------------------
+    def iteracion_de_politicas(self, num_episodios):
+        estados_posibles = [(fila, columna) for fila in range(self.entorno.filas) for columna in
+                            range(self.entorno.columnas) if (fila, columna) not in self.entorno.bloqueados]
+        # Inicializamos la Tabla de Utilidades
+        for estado in estados_posibles:
+            e = Estado(estado[0], estado[1])
+            if self.entorno.es_destino(e):
+                d_aux = {estado: self.entorno.obtener_recompensa(e)}
+                self.u_tabla.update(d_aux)
+            else:
+                d_aux = {estado: 0}
+                self.u_tabla.update(d_aux)
+        # Iniciamos las iteraciones
+        for i in range(num_episodios):
+            self.evaluacion_de_politica(estados_posibles)
+
+        # print(f"UTabla {self.u_tabla}")
+        # Mejoramos la política
+        self.mejora_politica()
+        # Diseño del Entorno con la política iterada
+        draw_policy_map(json_dir, self.politica_it)
+        return self.politica_it
+
+    def evaluacion_de_politica(self, estados_posibles):
+        # Utilizamos una copia para tener en cuenta el valor previo a la actualización
+        u_tabla_aux = self.u_tabla.copy()
+        mayor_cambio = 0
+        for estado in estados_posibles:
+            estado_actual = Estado(estado[0], estado[1])
+            if not self.entorno.es_destino(estado_actual):
+                # print(f"Estado actual -> {estado_actual}")
+                siguiente_estado = self.siguiente_estado(estado)
+                recompensa = self.entorno.obtener_recompensa(estado_actual)
+                # print(f"Recompensa de dicho estado -> {recompensa}")
+                probabilidad_transicionar = self.entorno.estocasticidad
+                # print(f"Estado siguiente -> {siguiente_estado}")
+                self.u_tabla[estado] = recompensa + self.gamma * np.sum(
+                    probabilidad_transicionar * u_tabla_aux[siguiente_estado])
+                mayor_cambio = max(mayor_cambio, abs(self.u_tabla[estado] - u_tabla_aux[estado]))
+                # print("\n ")
+
+    def mejora_politica(self):
+        politica_aux = {}
+        max_estado = None
+        # Valor de mejora iniciado a menos infinito
+        valor = float('-inf')
+        estados_posibles = [(fila, columna) for fila in range(self.entorno.filas) for columna in
+                            range(self.entorno.columnas)]
+
+        probabilidad_transicionar = self.entorno.estocasticidad
+        for estado in estados_posibles:
+            if estado not in self.entorno.destinos and estado not in self.entorno.peligros_fatales and estado not in self.entorno.bloqueados:
+                # print(f"Estado -> {estado}")
+                # Miramos los sucesores de ese estado, es decir, transiciones válidas en el entorno
+                sucesores = self.sucesores(estado)
+                # print(f"Sucesores -> {sucesores}")
+                for nuevo_estado in sucesores:
+                    # Calculamos el valor para esa accion que conlleva a un nuevo estado sucesor
+                    actual = probabilidad_transicionar * self.u_tabla[nuevo_estado]
+                    if actual > valor:
+                        # Si hay mejora actualizamos y determinamos el nuevo estado al que transicionar
+                        valor = actual
+                        max_estado = nuevo_estado
+                # print(f"Nuevo estado encontrado -> {max_estado}")
+                # Calculamos la diferencia para determinar qué accion ha llevado a ese estado y decodificarla en su string
+                accion_v = (max_estado[0] - estado[0], max_estado[1] - estado[1])
+                accion = self.decodificar_accion(accion_v)
+                # print(f"Accion V {accion_v}")
+                # print(f"Accion {accion}")
+                # Nos quedamos con esa acción y actualizamos la política
+                politica_aux.update({(estado[0], estado[1]): accion})
+                # Reseteamos los valores para el siguiente estado
+                valor = float('-inf')
+                actual = None
+        self.politica_it = politica_aux
+
+    def decodificar_accion(self, accion):
+        for key, value in self.direcciones_vector.items():
+            if value == accion:
+                return key
+
+    # Sucesores válidos para un determinado estado
+    def sucesores(self, estado):
+        movimientos = [(-1, 0), (0, 1), (1, 0), (0, -1)]
+        sucesores = []
+        for mx, my in movimientos:
+            nueva_fila = estado[0] + mx
+            nueva_columna = estado[1] + my
+            if self.entorno.es_valido(Estado(nueva_fila, nueva_columna)):
+                sucesores.append((nueva_fila, nueva_columna))
+        return sucesores
+
+    # Cálculo del siguiente estado en la política inicial heredada de Q-Learning
+    def siguiente_estado(self, estado):
+        # print(f"Estado -> {estado}")
+        aux = self.politica.get(estado)
+        accion = self.direcciones_vector.get(aux)
+        nueva_fila = estado[0] + accion[0]
+        nueva_columna = estado[1] + accion[1]
+        siguiente_estado = (nueva_fila, nueva_columna)
+        # print(f"Siguiente estado -> {siguiente_estado}")
+        return siguiente_estado
+
 
 if __name__ == '__main__':
     # Inicializamos el problema cargando el json y parametrizandolo
-    penalizacion_entorno = -0.1
+    penalizacion_entorno = -0.04
     penalizacion_peligro = -5
     estocasticidad_entorno = 0.8
-    numero_episodios = 1000
+    numero_episodios = 100
     alpha = 0.2
     gamma = 0.9
     epsilon = 0.2
@@ -283,6 +398,8 @@ if __name__ == '__main__':
     # Ejecutamos el Algoritmo con el nº de episodios y obtenemos la política y la imprimimos
     # Posteriormente la dibujamos
     algoritmo.ejecutar_algoritmo(numero_episodios)
+    # Parte correspondiente a la evaluación extraordinaria
+    algoritmo.iteracion_de_politicas(numero_episodios)
 
 
 
