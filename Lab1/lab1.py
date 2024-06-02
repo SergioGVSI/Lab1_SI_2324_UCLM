@@ -83,8 +83,8 @@ class Problema:
 
     def resolver_profundidad_iterativa(self, nodos_rescate):
         print("---ALGORITMO EN PROFUNDIDAD ITERATIVA---")
-        prof_max = 1
         for persona_rescate in nodos_rescate:
+            prof_max = 1
             sol = Profundidad(problema).iniciar_busqueda_limitada(persona_rescate, prof_max)
             if sol == -1:
                 while sol == -1:
