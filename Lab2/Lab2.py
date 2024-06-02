@@ -1,8 +1,11 @@
+import itertools
 import json
 import numpy as np
 import os
+import random
 from draw_policy import *
 from time import time
+import pandas as pd
 
 
 class Entorno:
@@ -89,26 +92,28 @@ class Entorno:
     # Método encargado de la estocasticidad, se aplica a las perpendiculares, tal como viene definido en los apuntes
     def aplicar_estocasticidad(self, accion):
         movimientos = [0, 1, 2, 3]
+        restante = 1 - self.estocasticidad
+        mitad = restante / 2
         if accion == movimientos[0]:  # Si Arriba
-            if np.random.rand() * 0.2 < 0.1:
+            if np.random.rand() * restante < mitad:
                 return movimientos[3]  # Izquierda
             else:
                 return movimientos[1]  # Derecha
 
         if accion == movimientos[1]:  # Si Derecha
-            if np.random.rand() * 0.2 < 0.1:
+            if np.random.rand() * restante < mitad:
                 return movimientos[0]  # Arriba
             else:
                 return movimientos[2]  # Abajo
 
         if accion == movimientos[2]:  # Si Abajo
-            if np.random.rand() * 0.2 < 0.1:
+            if np.random.rand() * restante < mitad:
                 return movimientos[1]  # Izquierda
             else:
                 return movimientos[3]  # Derecha
 
         if accion == movimientos[3]:  # Si Izquierda
-            if np.random.rand() * 0.2 < 0.1:
+            if np.random.rand() * restante < mitad:
                 return movimientos[2]  # Abajo
             else:
                 return movimientos[0]  # Arriba
@@ -163,20 +168,23 @@ class Agente:
         "LEFT": (0, -1)
     }
 
-    def __init__(self, entorno, alpha, gamma, epsilon, decaimiento_epsilon, json_dir):
+    def __init__(self, entorno, alpha, gamma, epsilon, decaimiento_epsilon, json_dir, decaimiento_alpha):
         self.entorno = entorno
         self.movimientos = [Agente.direcciones[movimiento] for movimiento in
                             Agente.mov_numericos]  # Arriba, Derecha, Abajo, Izquierda respectivamente
         self.qtabla = np.zeros((entorno.filas, entorno.columnas, len(self.mov_numericos)))
         self.u_tabla = {}
         self.alpha = alpha
+        self.alpha_inicial = alpha
         self.gamma = gamma
         self.epsilon = epsilon
         self.decaimiento_epsilon = decaimiento_epsilon
+        self.decaimiento_alpha = decaimiento_alpha
         self.politica = None
         self.json_dir = json_dir
         self.tiempo_ejecucion = None
         self.politica_it = {}
+        self.num_episodios = None
 
     # El agente sólo desea aplicar una accion en base a un estado, es el entorno el encargado de que esa aplicacion se ejecute
     # así como se obtenga la recompensa
@@ -212,11 +220,13 @@ class Agente:
                               self.max_q(nuevo_estado)])
             self.qtabla[estado_actual.fila][estado_actual.columna][accion_elegida] = nuevo_valor
         return nuevo_valor
+        # Marca
 
     # Ejecución del algoritmo en función del número de episodios
     def ejecutar_algoritmo(self, num_episodios):
+        self.num_episodios = num_episodios
         self.tiempo_ejecucion = time()
-        for i in range(num_episodios):
+        for i in range(self.num_episodios):
             self.episodio()
         self.tiempo_ejecucion = time() - self.tiempo_ejecucion
         return self.obtener_politica()
@@ -231,7 +241,13 @@ class Agente:
             nuevo_estado, recompensa = self.realizar_movimiento(accion_elegida, estado_actual)
             if self.entorno.es_destino(nuevo_estado):
                 destino = True
-                self.epsilon *= self.decaimiento_epsilon  # Decaimiento de épsilon en cada final de episodio
+                # Decaimiento de épsilon en cada final de episodio
+                self.epsilon *= self.decaimiento_epsilon
+                # Decaimiento de Alpha en cada final de episodio
+                # Evita que en valores altos de Alpha los valores se estabilicen y disparan el tiempo de ejecucion del algoritmo
+                # Valores bajos retrasan la convergencia
+                # con el decaimiento de Alpha encontramos un equilibrio
+                self.alpha = self.alpha_inicial * self.decaimiento_alpha ** self.num_episodios
             self.actualizar_qtabla(estado_actual, accion_elegida, recompensa, nuevo_estado, destino)
             estado_actual = nuevo_estado
 
@@ -248,31 +264,52 @@ class Agente:
         self.estadisticas()
         return politica
 
-    def estadisticas(self):
-        destinos = []
-        for estados in self.entorno.destinos.keys():
-            destinos.append(estados)
-
-        print("----ALGORITMO QLEARNING----")
-        print("\n ")
-        print(f"Estado inicial: {self.entorno.inicio}")
-        print(f"Personas a rescatar: {destinos}")
-        print(f"Tamaño de la ciudad: {self.entorno.filas} x {self.entorno.columnas}")
-        print(f"Tiempo de ejecución del Algoritmo: {self.tiempo_ejecucion:.2f} segundos")
-        print("\n ")
-        print("----QTabla----")
-        print("\n ")
-        print(self.qtabla)
-        print("\n ")
-        print("----POLÍTICA OBTENIDA CON QQLEARNING----")
-        for estado, accion in self.politica.items():
-            print(f"\"({estado[0]}, {estado[1]})\": \"{accion}\"")
-        print("----MAPA DE LA POLÍTICA OBTENIDA QQLEARNING----")
-        print("\n ")
-        draw_policy_map(json_dir, self.politica)
+    def estadisticas(self, iterativa=False):
+        # En función de si es llamada desde iteratición de políticas o no, imprime las estadísticas pertinentes
+        if iterativa:
+            df = pd.DataFrame(list(self.u_tabla.items()), index=None, columns=['Estado', 'Valor'])
+            print("----ITERACIÓN DE POLÍTICAS----")
+            print("\n ")
+            print(f"Número de iteraciones realizadas: {self.num_episodios}")
+            print(f"Tiempo de ejecución: {self.tiempo_ejecucion}")
+            print("\n ")
+            print("----Tabla de utilidades final----")
+            print("\n ")
+            print(df.to_string(index=False))
+            print("\n ")
+            print("----POLÍTICA OBTENIDA CON ITERACIÓN DE POLÍTICAS----")
+            for estado, accion in self.politica_it.items():
+                print(f"\"({estado[0]}, {estado[1]})\": \"{accion}\"")
+            print("----MAPA DE LA POLÍTICA CON ITERACIÓN DE POLÍTICAS----")
+            print("\n ")
+            draw_policy_map(json_dir, self.politica_it)
+        else:
+            destinos = []
+            for estados in self.entorno.destinos.keys():
+                destinos.append(estados)
+            print("----ALGORITMO QLEARNING----")
+            print("\n ")
+            print(f"Número de episodios: {self.num_episodios}")
+            print(f"Estado inicial: {self.entorno.inicio}")
+            print(f"Personas a rescatar: {destinos}")
+            print(f"Tamaño de la ciudad: {self.entorno.filas} x {self.entorno.columnas}")
+            print(f"Tiempo de ejecución del Algoritmo: {self.tiempo_ejecucion:.2f} segundos")
+            print("\n ")
+            print("----QTabla----")
+            print("\n ")
+            print(self.qtabla)
+            print("\n ")
+            print("----POLÍTICA OBTENIDA CON QQLEARNING----")
+            for estado, accion in self.politica.items():
+                print(f"\"({estado[0]}, {estado[1]})\": \"{accion}\"")
+            print("----MAPA DE LA POLÍTICA OBTENIDA QQLEARNING----")
+            print("\n ")
+            draw_policy_map(json_dir, self.politica)
 
     # ---------------------------------- EJERCICIO PARTE EXTRAORDINARIA ----------------------------------
     def iteracion_de_politicas(self, num_episodios):
+        self.num_episodios = num_episodios
+
         estados_posibles = [(fila, columna) for fila in range(self.entorno.filas) for columna in
                             range(self.entorno.columnas) if (fila, columna) not in self.entorno.bloqueados]
         # Inicializamos la Tabla de Utilidades
@@ -285,20 +322,20 @@ class Agente:
                 d_aux = {estado: 0}
                 self.u_tabla.update(d_aux)
         # Iniciamos las iteraciones
-        for i in range(num_episodios):
+        self.tiempo_ejecucion = time()
+        for i in range(self.num_episodios):
             self.evaluacion_de_politica(estados_posibles)
 
-        # print(f"UTabla {self.u_tabla}")
         # Mejoramos la política
         self.mejora_politica()
-        # Diseño del Entorno con la política iterada
-        draw_policy_map(json_dir, self.politica_it)
+        self.tiempo_ejecucion = time() - self.tiempo_ejecucion
+        self.estadisticas(True)
         return self.politica_it
 
     def evaluacion_de_politica(self, estados_posibles):
         # Utilizamos una copia para tener en cuenta el valor previo a la actualización
         u_tabla_aux = self.u_tabla.copy()
-        mayor_cambio = 0
+        mayor_cambio = 0  # marca
         for estado in estados_posibles:
             estado_actual = Estado(estado[0], estado[1])
             if not self.entorno.es_destino(estado_actual):
@@ -306,12 +343,79 @@ class Agente:
                 siguiente_estado = self.siguiente_estado(estado)
                 recompensa = self.entorno.obtener_recompensa(estado_actual)
                 # print(f"Recompensa de dicho estado -> {recompensa}")
+
+                # Al igual que los apuntes, tenemos en cuenta la probabilidad de la política dadad, no las perpendiculares
                 probabilidad_transicionar = self.entorno.estocasticidad
+
                 # print(f"Estado siguiente -> {siguiente_estado}")
                 self.u_tabla[estado] = recompensa + self.gamma * np.sum(
                     probabilidad_transicionar * u_tabla_aux[siguiente_estado])
                 mayor_cambio = max(mayor_cambio, abs(self.u_tabla[estado] - u_tabla_aux[estado]))
                 # print("\n ")
+                # marca
+
+    def transicion_y_utilidad(self, estado, estado_siguiente):
+        accion_v = (estado_siguiente[0] - estado[0], estado_siguiente[1] - estado[1])
+
+        # Sumatorio de para una acción el prob T(s,a,s')*U(s') y de sus perpendiculares
+        # Por ejemplo para estocasticidad 80% -> T80%(s,a1,s1)*U(s1) + T10%(s,a2,s2)*U(s2) + T10%(s,a3,s3)*U(s3)
+        # Si no es válida una perpendicular o el entorno es determinista automáticamente sólo saca un T(s,a,s')*U(s') ya que el resto es 0
+        if accion_v == (-1, 0):  # Arriba
+            accion_1 = self.entorno.estocasticidad * self.u_tabla[estado_siguiente]
+            perpendicular_1_prob = ((1 - self.entorno.estocasticidad) / 2)
+            estado_perpendicular_1 = (estado[0], estado[1] + 1)  # Derecha
+            if self.entorno.es_valido(Estado(estado_perpendicular_1[0], estado_perpendicular_1[1])):
+                accion_2 = perpendicular_1_prob * self.u_tabla[estado_perpendicular_1]
+            else:
+                accion_2 = 0
+            estado_perpendicular_2 = (estado[0], estado[1] - 1)  # Izquierda
+            if self.entorno.es_valido(Estado(estado_perpendicular_2[0], estado_perpendicular_2[1])):
+                accion_3 = perpendicular_1_prob * self.u_tabla[estado_perpendicular_2]
+            else:
+                accion_3 = 0
+            return np.sum(accion_1 + accion_2 + accion_3)
+        elif accion_v == (0, 1):  # Derecha
+            accion_1 = self.entorno.estocasticidad * self.u_tabla[estado_siguiente]
+            perpendicular_1_prob = ((1 - self.entorno.estocasticidad) / 2)
+            estado_perpendicular_1 = (estado[0] + 1, estado[1])  # Abajo
+            if self.entorno.es_valido(Estado(estado_perpendicular_1[0], estado_perpendicular_1[1])):
+                accion_2 = perpendicular_1_prob * self.u_tabla[estado_perpendicular_1]
+            else:
+                accion_2 = 0
+            estado_perpendicular_2 = (estado[0] - 1, estado[1])  # Arriba
+            if self.entorno.es_valido(Estado(estado_perpendicular_2[0], estado_perpendicular_2[1])):
+                accion_3 = perpendicular_1_prob * self.u_tabla[estado_perpendicular_2]
+            else:
+                accion_3 = 0
+            return np.sum(accion_1 + accion_2 + accion_3)
+        elif accion_v == (1, 0):  # Abajo
+            accion_1 = self.entorno.estocasticidad * self.u_tabla[estado_siguiente]
+            perpendicular_1_prob = ((1 - self.entorno.estocasticidad) / 2)
+            estado_perpendicular_1 = (estado[0], estado[1] + 1)  # Derecha
+            if self.entorno.es_valido(Estado(estado_perpendicular_1[0], estado_perpendicular_1[1])):
+                accion_2 = perpendicular_1_prob * self.u_tabla[estado_perpendicular_1]
+            else:
+                accion_2 = 0
+            estado_perpendicular_2 = (estado[0], estado[1] - 1)  # Izquierda
+            if self.entorno.es_valido(Estado(estado_perpendicular_2[0], estado_perpendicular_2[1])):
+                accion_3 = perpendicular_1_prob * self.u_tabla[estado_perpendicular_2]
+            else:
+                accion_3 = 0
+            return np.sum(accion_1 + accion_2 + accion_3)
+        else:  # Izquierda
+            accion_1 = self.entorno.estocasticidad * self.u_tabla[estado_siguiente]
+            perpendicular_1_prob = ((1 - self.entorno.estocasticidad) / 2)
+            estado_perpendicular_1 = (estado[0] + 1, estado[1])  # Abajo
+            if self.entorno.es_valido(Estado(estado_perpendicular_1[0], estado_perpendicular_1[1])):
+                accion_2 = perpendicular_1_prob * self.u_tabla[estado_perpendicular_1]
+            else:
+                accion_2 = 0
+            estado_perpendicular_2 = (estado[0] - 1, estado[1])  # Arriba
+            if self.entorno.es_valido(Estado(estado_perpendicular_2[0], estado_perpendicular_2[1])):
+                accion_3 = perpendicular_1_prob * self.u_tabla[estado_perpendicular_2]
+            else:
+                accion_3 = 0
+            return np.sum(accion_1 + accion_2 + accion_3)
 
     def mejora_politica(self):
         politica_aux = {}
@@ -321,7 +425,8 @@ class Agente:
         estados_posibles = [(fila, columna) for fila in range(self.entorno.filas) for columna in
                             range(self.entorno.columnas)]
 
-        probabilidad_transicionar = self.entorno.estocasticidad
+        # probabilidad_transicionar = self.entorno.estocasticidad
+
         for estado in estados_posibles:
             if estado not in self.entorno.destinos and estado not in self.entorno.peligros_fatales and estado not in self.entorno.bloqueados:
                 # print(f"Estado -> {estado}")
@@ -330,7 +435,9 @@ class Agente:
                 # print(f"Sucesores -> {sucesores}")
                 for nuevo_estado in sucesores:
                     # Calculamos el valor para esa accion que conlleva a un nuevo estado sucesor
-                    actual = probabilidad_transicionar * self.u_tabla[nuevo_estado]
+                    # probabilidad_transicionar, estado_siguiente = self.probabilidad_transicionar(estado,nuevo_estado)
+                    # probabilidad_transicionar = self.entorno.estocasticidad
+                    actual = self.transicion_y_utilidad(estado, nuevo_estado)
                     if actual > valor:
                         # Si hay mejora actualizamos y determinamos el nuevo estado al que transicionar
                         valor = actual
@@ -348,6 +455,7 @@ class Agente:
                 actual = None
         self.politica_it = politica_aux
 
+    # Simplemente para una accion devuelve el string al que corresponde
     def decodificar_accion(self, accion):
         for key, value in self.direcciones_vector.items():
             if value == accion:
@@ -377,29 +485,103 @@ class Agente:
 
 
 if __name__ == '__main__':
-    # Inicializamos el problema cargando el json y parametrizandolo
+    # Cargamos el json, descomentar el deseado o introducir otro
+    archivo_json = './initial-rl-instances/lesson5-rl.json'
+    # archivo_json = './initial-rl-instances/instance-10-10-12-4-11-1111--rl.json'
+    # archivo_json = ...
+    # Parámetro necesario para dibujar la política
+    json_dir = os.path.join(os.getcwd(), archivo_json)
+    # Inicializamos los parámetros
     penalizacion_entorno = -0.04
     penalizacion_peligro = -5
     estocasticidad_entorno = 0.8
-    numero_episodios = 100
+    numero_episodios = 1000
     alpha = 0.2
     gamma = 0.9
-    epsilon = 0.2
-    decaimiento_epsilon = 0.05
+    epsilon = 0.5
+    decaimiento_epsilon = 0.01
+    decaimiento_alpha = 0.999
 
-    # Parámetro necesario para dibujar la política
-    json_dir = os.path.join(os.getcwd(), './initial-rl-instances/lesson5-rl.json')
+    print("***************************************************************************************")
+    print(f"Penalización del entorno: {penalizacion_entorno}")
+    print(f"Penalización de peligro: {penalizacion_peligro}")
+    print(f"Estocasticidad del entorno: {estocasticidad_entorno}")
+    print(f"Número de episodios: {numero_episodios}")
+    print(f"Alpha: {alpha}")
+    print(f"Gamma: {gamma}")
+    print(f"Epsilon: {epsilon}")
+    print(f"Decaimiento de epsilon: {decaimiento_epsilon}")
+    print(f"Decaimiento de alpha: {decaimiento_alpha}")
+    print("\n")
     # Definimos el entorno con las variables parametrizadas
-    entorno = Entorno('./initial-rl-instances/lesson5-rl.json', penalizacion_entorno, penalizacion_peligro,
+    entorno = Entorno(archivo_json, penalizacion_entorno, penalizacion_peligro,
                       estocasticidad_entorno)
     # Inicializamos el Algoritmo
-    algoritmo = Agente(entorno, alpha, gamma, epsilon, decaimiento_epsilon, json_dir)
+    agente = Agente(entorno, alpha, gamma, epsilon, decaimiento_epsilon, json_dir, decaimiento_alpha)
 
     # Ejecutamos el Algoritmo con el nº de episodios y obtenemos la política y la imprimimos
     # Posteriormente la dibujamos
-    algoritmo.ejecutar_algoritmo(numero_episodios)
-    # Parte correspondiente a la evaluación extraordinaria
-    algoritmo.iteracion_de_politicas(numero_episodios)
+    agente.ejecutar_algoritmo(numero_episodios)
+    agente.iteracion_de_politicas(numero_episodios)
 
+'''if __name__ == '__main__':
+    # Cargamos el json, descomentar el deseado o introducir otro
+    archivo_json = './initial-rl-instances/lesson5-rl.json'
+    # archivo_json = './initial-rl-instances/instance-10-10-12-4-11-1111--rl.json'
+    # archivo_json = ...
 
+    # Parámetro necesario para dibujar la política
+    json_dir = os.path.join(os.getcwd(), archivo_json)
 
+    
+    # Inicializamos los parámetros en formato de vector para generar semillas
+    penalizacion_entorno = [-0.04, -0.5, -5]
+    penalizacion_peligro = [-5, -1, -10]
+    estocasticidad_entorno = [0.7, 0.8, 0.9]
+    numero_episodios = [100, 500, 1000]
+    alpha = [0.2, 0.5, 0.9]
+    gamma = [0.9, 0.5, 0.2]
+    epsilon = [0.2, 0.3, 0.5]
+    decaimiento_epsilon = [0.05, 0.01, 0.02]
+    decaimiento_alpha = [0.999, 0.995, 0.99]
+
+    # Generamos hasta 5 semillas
+    semillas = random.sample(list(itertools.product(
+        penalizacion_entorno,
+        penalizacion_peligro,
+        estocasticidad_entorno,
+        numero_episodios,
+        alpha,
+        gamma,
+        epsilon,
+        decaimiento_epsilon,
+        decaimiento_alpha
+    )),
+    5 # Con esto controlamos el número de semillas a utilizar para los test
+    )
+    # Iterar sobre las semillas en cada llamada
+    for i, semilla in enumerate(semillas):
+        penalizacion_entorno, penalizacion_peligro, estocasticidad_entorno, numero_episodios, alpha, gamma, epsilon, decaimiento_epsilon, decaimiento_alpha = semilla
+        
+        print(f"----SEMILLA {i + 1}----")
+        print("\n")
+        print(f"Penalización del entorno: {penalizacion_entorno}")
+        print(f"Penalización de peligro: {penalizacion_peligro}")
+        print(f"Estocasticidad del entorno: {estocasticidad_entorno}")
+        print(f"Número de episodios: {numero_episodios}")
+        print(f"Alpha: {alpha}")
+        print(f"Gamma: {gamma}")
+        print(f"Epsilon: {epsilon}")
+        print(f"Decaimiento de epsilon: {decaimiento_epsilon}")
+        print(f"Decaimiento de alpha: {decaimiento_alpha}")
+        print("\n")
+
+        # Llamar a Entorno y Agente con las semillas correspondientes
+        entorno = Entorno(archivo_json, penalizacion_entorno, penalizacion_peligro, estocasticidad_entorno)
+        agente = Agente(entorno, alpha, gamma, epsilon, decaimiento_epsilon, json_dir, decaimiento_alpha)
+        agente.ejecutar_algoritmo(numero_episodios)
+        # Parte correspondiente a la evaluación extraordinaria 
+        agente.iteracion_de_politicas(numero_episodios)
+        print("\n")
+
+'''
