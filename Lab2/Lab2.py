@@ -183,7 +183,7 @@ class Agente:
         self.politica = None
         self.json_dir = json_dir
         self.tiempo_ejecucion = None
-        self.politica_it = {}
+        #self.politica_it = {}
         self.num_episodios = None
 
     # El agente sólo desea aplicar una accion en base a un estado, es el entorno el encargado de que esa aplicacion se ejecute
@@ -220,7 +220,6 @@ class Agente:
                               self.max_q(nuevo_estado)])
             self.qtabla[estado_actual.fila][estado_actual.columna][accion_elegida] = nuevo_valor
         return nuevo_valor
-        # Marca
 
     # Ejecución del algoritmo en función del número de episodios
     def ejecutar_algoritmo(self, num_episodios):
@@ -278,11 +277,11 @@ class Agente:
             print(df.to_string(index=False))
             print("\n ")
             print("----POLÍTICA OBTENIDA CON ITERACIÓN DE POLÍTICAS----")
-            for estado, accion in self.politica_it.items():
+            for estado, accion in self.politica.items():
                 print(f"\"({estado[0]}, {estado[1]})\": \"{accion}\"")
             print("----MAPA DE LA POLÍTICA CON ITERACIÓN DE POLÍTICAS----")
             print("\n ")
-            draw_policy_map(json_dir, self.politica_it)
+            draw_policy_map(json_dir, self.politica)
         else:
             destinos = []
             for estados in self.entorno.destinos.keys():
@@ -307,9 +306,7 @@ class Agente:
             draw_policy_map(json_dir, self.politica)
 
     # ---------------------------------- EJERCICIO PARTE EXTRAORDINARIA ----------------------------------
-    def iteracion_de_politicas(self, num_episodios):
-        self.num_episodios = num_episodios
-
+    def iteracion_de_politicas(self):
         estados_posibles = [(fila, columna) for fila in range(self.entorno.filas) for columna in
                             range(self.entorno.columnas) if (fila, columna) not in self.entorno.bloqueados]
         # Inicializamos la Tabla de Utilidades
@@ -323,99 +320,87 @@ class Agente:
                 self.u_tabla.update(d_aux)
         # Iniciamos las iteraciones
         self.tiempo_ejecucion = time()
-        for i in range(self.num_episodios):
+        for _ in range(self.num_episodios):
+            # Iteramos sobre la política inicial
             self.evaluacion_de_politica(estados_posibles)
-
-        # Mejoramos la política
-        self.mejora_politica()
+            # Mejoramos la política que utilizará la iteración siguiente
+            self.mejora_politica()
         self.tiempo_ejecucion = time() - self.tiempo_ejecucion
         self.estadisticas(True)
-        return self.politica_it
+        return self.politica
 
     def evaluacion_de_politica(self, estados_posibles):
-        # Utilizamos una copia para tener en cuenta el valor previo a la actualización
-        u_tabla_aux = self.u_tabla.copy()
-        mayor_cambio = 0  # marca
         for estado in estados_posibles:
             estado_actual = Estado(estado[0], estado[1])
             if not self.entorno.es_destino(estado_actual):
-                # print(f"Estado actual -> {estado_actual}")
                 siguiente_estado = self.siguiente_estado(estado)
                 recompensa = self.entorno.obtener_recompensa(estado_actual)
-                # print(f"Recompensa de dicho estado -> {recompensa}")
-
-                # Al igual que los apuntes, tenemos en cuenta la probabilidad de la política dadad, no las perpendiculares
-                probabilidad_transicionar = self.entorno.estocasticidad
-
-                # print(f"Estado siguiente -> {siguiente_estado}")
-                self.u_tabla[estado] = recompensa + self.gamma * np.sum(
-                    probabilidad_transicionar * u_tabla_aux[siguiente_estado])
-                mayor_cambio = max(mayor_cambio, abs(self.u_tabla[estado] - u_tabla_aux[estado]))
-                # print("\n ")
-                # marca
+                # Tenemos en cuenta el siguiente estado con su probabilidad y las perpendiculares en un entorno estocástico
+                # Esto devuelve el sumatorio de la probabilidad de la acción de la política y de la % de sus perpendiculares
+                sumatorio_transicion_y_utilidad = self.transicion_y_utilidad(estado,siguiente_estado)
+                self.u_tabla[estado] = recompensa + self.gamma * sumatorio_transicion_y_utilidad
 
     def transicion_y_utilidad(self, estado, estado_siguiente):
-        accion_v = (estado_siguiente[0] - estado[0], estado_siguiente[1] - estado[1])
-
-        # Sumatorio de para una acción el prob T(s,a,s')*U(s') y de sus perpendiculares
-        # Por ejemplo para estocasticidad 80% -> T80%(s,a1,s1)*U(s1) + T10%(s,a2,s2)*U(s2) + T10%(s,a3,s3)*U(s3)
-        # Si no es válida una perpendicular o el entorno es determinista automáticamente sólo saca un T(s,a,s')*U(s') ya que el resto es 0
-        if accion_v == (-1, 0):  # Arriba
-            accion_1 = self.entorno.estocasticidad * self.u_tabla[estado_siguiente]
-            perpendicular_1_prob = ((1 - self.entorno.estocasticidad) / 2)
-            estado_perpendicular_1 = (estado[0], estado[1] + 1)  # Derecha
-            if self.entorno.es_valido(Estado(estado_perpendicular_1[0], estado_perpendicular_1[1])):
-                accion_2 = perpendicular_1_prob * self.u_tabla[estado_perpendicular_1]
-            else:
-                accion_2 = 0
-            estado_perpendicular_2 = (estado[0], estado[1] - 1)  # Izquierda
-            if self.entorno.es_valido(Estado(estado_perpendicular_2[0], estado_perpendicular_2[1])):
-                accion_3 = perpendicular_1_prob * self.u_tabla[estado_perpendicular_2]
-            else:
-                accion_3 = 0
-            return np.sum(accion_1 + accion_2 + accion_3)
-        elif accion_v == (0, 1):  # Derecha
-            accion_1 = self.entorno.estocasticidad * self.u_tabla[estado_siguiente]
-            perpendicular_1_prob = ((1 - self.entorno.estocasticidad) / 2)
-            estado_perpendicular_1 = (estado[0] + 1, estado[1])  # Abajo
-            if self.entorno.es_valido(Estado(estado_perpendicular_1[0], estado_perpendicular_1[1])):
-                accion_2 = perpendicular_1_prob * self.u_tabla[estado_perpendicular_1]
-            else:
-                accion_2 = 0
-            estado_perpendicular_2 = (estado[0] - 1, estado[1])  # Arriba
-            if self.entorno.es_valido(Estado(estado_perpendicular_2[0], estado_perpendicular_2[1])):
-                accion_3 = perpendicular_1_prob * self.u_tabla[estado_perpendicular_2]
-            else:
-                accion_3 = 0
-            return np.sum(accion_1 + accion_2 + accion_3)
-        elif accion_v == (1, 0):  # Abajo
-            accion_1 = self.entorno.estocasticidad * self.u_tabla[estado_siguiente]
-            perpendicular_1_prob = ((1 - self.entorno.estocasticidad) / 2)
-            estado_perpendicular_1 = (estado[0], estado[1] + 1)  # Derecha
-            if self.entorno.es_valido(Estado(estado_perpendicular_1[0], estado_perpendicular_1[1])):
-                accion_2 = perpendicular_1_prob * self.u_tabla[estado_perpendicular_1]
-            else:
-                accion_2 = 0
-            estado_perpendicular_2 = (estado[0], estado[1] - 1)  # Izquierda
-            if self.entorno.es_valido(Estado(estado_perpendicular_2[0], estado_perpendicular_2[1])):
-                accion_3 = perpendicular_1_prob * self.u_tabla[estado_perpendicular_2]
-            else:
-                accion_3 = 0
-            return np.sum(accion_1 + accion_2 + accion_3)
-        else:  # Izquierda
-            accion_1 = self.entorno.estocasticidad * self.u_tabla[estado_siguiente]
-            perpendicular_1_prob = ((1 - self.entorno.estocasticidad) / 2)
-            estado_perpendicular_1 = (estado[0] + 1, estado[1])  # Abajo
-            if self.entorno.es_valido(Estado(estado_perpendicular_1[0], estado_perpendicular_1[1])):
-                accion_2 = perpendicular_1_prob * self.u_tabla[estado_perpendicular_1]
-            else:
-                accion_2 = 0
-            estado_perpendicular_2 = (estado[0] - 1, estado[1])  # Arriba
-            if self.entorno.es_valido(Estado(estado_perpendicular_2[0], estado_perpendicular_2[1])):
-                accion_3 = perpendicular_1_prob * self.u_tabla[estado_perpendicular_2]
-            else:
-                accion_3 = 0
-            return np.sum(accion_1 + accion_2 + accion_3)
+            accion_v = (estado_siguiente[0] - estado[0], estado_siguiente[1] - estado[1])
+            # Sumatorio de para una acción el prob T(s,a,s')*U(s') y de sus perpendiculares
+            # Por ejemplo para estocasticidad 80% -> T80%(s,a1,s1)*U(s1) + T10%(s,a2,s2)*U(s2) + T10%(s,a3,s3)*U(s3)
+            # Si no es válida una perpendicular o el entorno es determinista automáticamente sólo saca un T(s,a,s')*U(s') ya que el resto es 0
+            if accion_v == (-1,0): # Arriba
+                accion_1 = self.entorno.estocasticidad * self.u_tabla[estado_siguiente]
+                perpendicular_1_prob = ((1 - self.entorno.estocasticidad) / 2)
+                estado_perpendicular_1 = (estado[0], estado[1]+1) # Derecha
+                if self.entorno.es_valido(Estado(estado_perpendicular_1[0], estado_perpendicular_1[1])):
+                    accion_2 =  perpendicular_1_prob * self.u_tabla[estado_perpendicular_1]
+                else:
+                    accion_2 = 0
+                estado_perpendicular_2 = (estado[0], estado[1]-1) # Izquierda
+                if self.entorno.es_valido(Estado(estado_perpendicular_2[0], estado_perpendicular_2[1])):
+                    accion_3 =  perpendicular_1_prob * self.u_tabla[estado_perpendicular_2]
+                else:
+                    accion_3 = 0
+                return np.sum(accion_1 + accion_2 + accion_3)
+            elif accion_v == (0,1): # Derecha
+                accion_1 = self.entorno.estocasticidad * self.u_tabla[estado_siguiente]
+                perpendicular_1_prob = ((1 - self.entorno.estocasticidad) / 2)
+                estado_perpendicular_1 = (estado[0]+1, estado[1]) # Abajo
+                if self.entorno.es_valido(Estado(estado_perpendicular_1[0], estado_perpendicular_1[1])):
+                    accion_2 =  perpendicular_1_prob * self.u_tabla[estado_perpendicular_1]
+                else:
+                    accion_2 = 0
+                estado_perpendicular_2 = (estado[0]-1, estado[1]) # Arriba
+                if self.entorno.es_valido(Estado(estado_perpendicular_2[0], estado_perpendicular_2[1])):
+                    accion_3 =  perpendicular_1_prob * self.u_tabla[estado_perpendicular_2]
+                else:
+                    accion_3 = 0
+                return np.sum(accion_1 + accion_2 + accion_3)
+            elif accion_v == (1,0): # Abajo
+                accion_1 = self.entorno.estocasticidad * self.u_tabla[estado_siguiente]
+                perpendicular_1_prob = ((1 - self.entorno.estocasticidad) / 2)
+                estado_perpendicular_1 = (estado[0], estado[1] + 1) # Derecha
+                if self.entorno.es_valido(Estado(estado_perpendicular_1[0], estado_perpendicular_1[1])):
+                    accion_2 =  perpendicular_1_prob * self.u_tabla[estado_perpendicular_1]
+                else:
+                    accion_2 = 0
+                estado_perpendicular_2 = (estado[0], estado[1] - 1) # Izquierda
+                if self.entorno.es_valido(Estado(estado_perpendicular_2[0], estado_perpendicular_2[1])):
+                    accion_3 =  perpendicular_1_prob * self.u_tabla[estado_perpendicular_2]
+                else:
+                    accion_3 = 0
+                return np.sum(accion_1 + accion_2 + accion_3)
+            else: # Izquierda
+                accion_1 = self.entorno.estocasticidad * self.u_tabla[estado_siguiente]
+                perpendicular_1_prob = ((1 - self.entorno.estocasticidad) / 2)
+                estado_perpendicular_1 = (estado[0] + 1, estado[1]) # Abajo
+                if self.entorno.es_valido(Estado(estado_perpendicular_1[0], estado_perpendicular_1[1])):
+                    accion_2 =  perpendicular_1_prob * self.u_tabla[estado_perpendicular_1]
+                else:
+                    accion_2 = 0
+                estado_perpendicular_2 = (estado[0] - 1, estado[1]) # Arriba
+                if self.entorno.es_valido(Estado(estado_perpendicular_2[0], estado_perpendicular_2[1])):
+                    accion_3 =  perpendicular_1_prob * self.u_tabla[estado_perpendicular_2]
+                else:
+                    accion_3 = 0
+                return np.sum(accion_1 + accion_2 + accion_3)
 
     def mejora_politica(self):
         politica_aux = {}
@@ -425,35 +410,27 @@ class Agente:
         estados_posibles = [(fila, columna) for fila in range(self.entorno.filas) for columna in
                             range(self.entorno.columnas)]
 
-        # probabilidad_transicionar = self.entorno.estocasticidad
-
         for estado in estados_posibles:
             if estado not in self.entorno.destinos and estado not in self.entorno.peligros_fatales and estado not in self.entorno.bloqueados:
-                # print(f"Estado -> {estado}")
                 # Miramos los sucesores de ese estado, es decir, transiciones válidas en el entorno
                 sucesores = self.sucesores(estado)
-                # print(f"Sucesores -> {sucesores}")
                 for nuevo_estado in sucesores:
                     # Calculamos el valor para esa accion que conlleva a un nuevo estado sucesor
-                    # probabilidad_transicionar, estado_siguiente = self.probabilidad_transicionar(estado,nuevo_estado)
-                    # probabilidad_transicionar = self.entorno.estocasticidad
-                    actual = self.transicion_y_utilidad(estado, nuevo_estado)
+                    actual = self.transicion_y_utilidad(estado,nuevo_estado)
                     if actual > valor:
                         # Si hay mejora actualizamos y determinamos el nuevo estado al que transicionar
                         valor = actual
                         max_estado = nuevo_estado
-                # print(f"Nuevo estado encontrado -> {max_estado}")
+
                 # Calculamos la diferencia para determinar qué accion ha llevado a ese estado y decodificarla en su string
                 accion_v = (max_estado[0] - estado[0], max_estado[1] - estado[1])
                 accion = self.decodificar_accion(accion_v)
-                # print(f"Accion V {accion_v}")
-                # print(f"Accion {accion}")
                 # Nos quedamos con esa acción y actualizamos la política
                 politica_aux.update({(estado[0], estado[1]): accion})
                 # Reseteamos los valores para el siguiente estado
                 valor = float('-inf')
                 actual = None
-        self.politica_it = politica_aux
+        self.politica = politica_aux
 
     # Simplemente para una accion devuelve el string al que corresponde
     def decodificar_accion(self, accion):
@@ -472,16 +449,15 @@ class Agente:
                 sucesores.append((nueva_fila, nueva_columna))
         return sucesores
 
-    # Cálculo del siguiente estado en la política inicial heredada de Q-Learning
+    # Cálculo del siguiente estado en la política
     def siguiente_estado(self, estado):
-        # print(f"Estado -> {estado}")
         aux = self.politica.get(estado)
         accion = self.direcciones_vector.get(aux)
         nueva_fila = estado[0] + accion[0]
         nueva_columna = estado[1] + accion[1]
         siguiente_estado = (nueva_fila, nueva_columna)
-        # print(f"Siguiente estado -> {siguiente_estado}")
         return siguiente_estado
+
 
 
 if __name__ == '__main__':
@@ -498,8 +474,8 @@ if __name__ == '__main__':
     numero_episodios = 1000
     alpha = 0.2
     gamma = 0.9
-    epsilon = 0.5
-    decaimiento_epsilon = 0.01
+    epsilon = 0.3
+    decaimiento_epsilon = 0.05
     decaimiento_alpha = 0.999
 
     print("***************************************************************************************")
@@ -522,7 +498,7 @@ if __name__ == '__main__':
     # Ejecutamos el Algoritmo con el nº de episodios y obtenemos la política y la imprimimos
     # Posteriormente la dibujamos
     agente.ejecutar_algoritmo(numero_episodios)
-    agente.iteracion_de_politicas(numero_episodios)
+    agente.iteracion_de_politicas()
 
 '''if __name__ == '__main__':
     # Cargamos el json, descomentar el deseado o introducir otro
@@ -542,7 +518,7 @@ if __name__ == '__main__':
     alpha = [0.2, 0.5, 0.9]
     gamma = [0.9, 0.5, 0.2]
     epsilon = [0.2, 0.3, 0.5]
-    decaimiento_epsilon = [0.05, 0.01, 0.02]
+    decaimiento_epsilon = [0.05, 0.01, 0.02, 0.005]
     decaimiento_alpha = [0.999, 0.995, 0.99]
 
     # Generamos hasta 5 semillas
@@ -581,7 +557,7 @@ if __name__ == '__main__':
         agente = Agente(entorno, alpha, gamma, epsilon, decaimiento_epsilon, json_dir, decaimiento_alpha)
         agente.ejecutar_algoritmo(numero_episodios)
         # Parte correspondiente a la evaluación extraordinaria 
-        agente.iteracion_de_politicas(numero_episodios)
+        agente.iteracion_de_politicas()
         print("\n")
 
 '''
